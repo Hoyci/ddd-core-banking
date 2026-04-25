@@ -1,6 +1,6 @@
-# DDD Core Banking — Projeto de Estudo
+# DDD Core Banking
 
-Este repositório é um projeto de estudo onde estou aprendendo e praticando os conceitos de **Domain-Driven Design (DDD)** aplicados a um sistema bancário em Go. 
+Este repositório é um projeto onde estou praticando os conceitos de **Domain-Driven Design (DDD)** aplicados a um sistema bancário em Go pensado para ser executado em produção. 
 
 O código aqui não é um produto. Mas cada decisão de design foi tomada para tornar o projeto escalável para produção utilizando os conceitos de DDD.
 
