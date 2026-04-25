@@ -15,15 +15,8 @@ import (
 	"ddd-core-banking/internal/onboarding/infrastructure/outbox"
 	"ddd-core-banking/internal/onboarding/infrastructure/persistence/postgres"
 	handler "ddd-core-banking/internal/onboarding/interfaces/http"
+	"ddd-core-banking/pkg/messaging/rabbitmq"
 )
-
-// logPublisher is a stub — replace with a real Kafka/RabbitMQ implementation.
-type logPublisher struct{}
-
-func (p *logPublisher) Publish(eventName string, payload []byte) error {
-	log.Printf("event published: %s %s", eventName, payload)
-	return nil
-}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -32,6 +25,11 @@ func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		log.Fatal("DATABASE_URL is required")
+	}
+
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		log.Fatal("RABBITMQ_URL is required")
 	}
 
 	pool, err := pgxpool.New(ctx, dsn)
@@ -45,6 +43,12 @@ func main() {
 		log.Fatalf("connecting to database for outbox worker: %v", err)
 	}
 	defer conn.Close(ctx)
+
+	publisher, err := rabbitmq.NewPublisher(rabbitURL, "core-banking")
+	if err != nil {
+		log.Fatalf("creating rabbitmq publisher: %v", err)
+	}
+	defer publisher.Close()
 
 	clientRepo := postgres.NewClientRepository(pool)
 	outboxRepo := postgres.NewOutboxRepository(pool)
@@ -60,14 +64,12 @@ func main() {
 	mux.HandleFunc("PATCH /clients/{clientID}/approve", clientHandler.Approve)
 	mux.HandleFunc("PATCH /clients/{clientID}/reject", clientHandler.Reject)
 
-	// outbox worker em goroutine separada
 	workerErr := make(chan error, 1)
 	go func() {
-		worker := outbox.NewWorker(conn, outboxRepo, &logPublisher{})
+		worker := outbox.NewWorker(conn, outboxRepo, publisher)
 		workerErr <- worker.Start(ctx)
 	}()
 
-	// servidor HTTP em goroutine separada
 	server := &http.Server{Addr: ":8080", Handler: mux}
 	serverErr := make(chan error, 1)
 	go func() {

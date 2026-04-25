@@ -1,6 +1,5 @@
 CREATE TABLE clients (
     id          TEXT PRIMARY KEY,
-    document    TEXT NOT NULL UNIQUE,
     full_name   TEXT NOT NULL,
     email       TEXT NOT NULL UNIQUE,
     phone       TEXT NOT NULL,

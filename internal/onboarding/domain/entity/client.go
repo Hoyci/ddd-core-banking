@@ -50,19 +50,6 @@ type ClientData struct {
 	CreatedAt time.Time
 }
 
-func ReconstituteClient(data ClientData) *Client {
-	return &Client{
-		id:        data.ID,
-		document:  data.Document,
-		fullName:  data.FullName,
-		email:     data.Email,
-		phone:     data.Phone,
-		address:   data.Address,
-		status:    data.Status,
-		createdAt: data.CreatedAt,
-	}
-}
-
 func CreateClient(input CreateClientInput) (*Client, error) {
 	if input.FullName == "" {
 		return nil, domain.ErrFullNameRequired
@@ -156,6 +143,19 @@ func (c *Client) PullEvents() []events.DomainEvent {
 	evts := c.events
 	c.events = nil
 	return evts
+}
+
+func ReconstituteClient(data ClientData) *Client {
+	return &Client{
+		id:        data.ID,
+		document:  data.Document,
+		fullName:  data.FullName,
+		email:     data.Email,
+		phone:     data.Phone,
+		address:   data.Address,
+		status:    data.Status,
+		createdAt: data.CreatedAt,
+	}
 }
 
 func (c *Client) ID() string                      { return c.id }

@@ -47,11 +47,16 @@ type createClientRequest struct {
 	Address  createClientAddressRequest `json:"address"`
 }
 
+func writeJSON(w http.ResponseWriter, status int, body pkghttp.ApiResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(body)
+}
+
 func (h *ClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req := &createClientRequest{}
 	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "invalid request body"})
+		writeJSON(w, http.StatusBadRequest, pkghttp.ApiResponse{Message: "invalid request body"})
 		return
 	}
 
@@ -72,9 +77,10 @@ func (h *ClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.createClient.Execute(input); err != nil {
+		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, domain.ErrEmailAlreadyInUse):
-			w.WriteHeader(http.StatusConflict) // 409
+			status = http.StatusConflict
 		case errors.Is(err, domain.ErrInvalidDocument),
 			errors.Is(err, domain.ErrInvalidEmail),
 			errors.Is(err, domain.ErrFullNameRequired),
@@ -86,23 +92,19 @@ func (h *ClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, domain.ErrCityRequired),
 			errors.Is(err, domain.ErrStateRequired),
 			errors.Is(err, domain.ErrInvalidState):
-			w.WriteHeader(http.StatusUnprocessableEntity) // 422
-		default:
-			w.WriteHeader(http.StatusInternalServerError) // 500
+			status = http.StatusUnprocessableEntity
 		}
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: err.Error()})
+		writeJSON(w, status, pkghttp.ApiResponse{Message: err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "client successfully created"})
+	writeJSON(w, http.StatusCreated, pkghttp.ApiResponse{Message: "client successfully created"})
 }
 
 func (h *ClientHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
 	if clientID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "missing clientID"})
+		writeJSON(w, http.StatusBadRequest, pkghttp.ApiResponse{Message: "missing clientID"})
 		return
 	}
 
@@ -111,20 +113,18 @@ func (h *ClientHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.approveClient.Execute(input); err != nil {
+		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
-			w.WriteHeader(http.StatusNotFound)
+			status = http.StatusNotFound
 		case errors.Is(err, domain.ErrClientNotPending):
-			w.WriteHeader(http.StatusUnprocessableEntity)
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
+			status = http.StatusUnprocessableEntity
 		}
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: err.Error()})
+		writeJSON(w, status, pkghttp.ApiResponse{Message: err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "client approved"})
+	writeJSON(w, http.StatusOK, pkghttp.ApiResponse{Message: "client approved"})
 }
 
 type rejectClientRequest struct {
@@ -134,15 +134,13 @@ type rejectClientRequest struct {
 func (h *ClientHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
 	if clientID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "missing clientID"})
+		writeJSON(w, http.StatusBadRequest, pkghttp.ApiResponse{Message: "missing clientID"})
 		return
 	}
 
 	req := &rejectClientRequest{}
 	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "invalid request body"})
+		writeJSON(w, http.StatusBadRequest, pkghttp.ApiResponse{Message: "invalid request body"})
 		return
 	}
 
@@ -152,19 +150,17 @@ func (h *ClientHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rejectClient.Execute(input); err != nil {
+		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
-			w.WriteHeader(http.StatusNotFound)
+			status = http.StatusNotFound
 		case errors.Is(err, domain.ErrClientNotPending),
 			errors.Is(err, domain.ErrRejectionReasonRequired):
-			w.WriteHeader(http.StatusUnprocessableEntity)
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
+			status = http.StatusUnprocessableEntity
 		}
-		json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: err.Error()})
+		writeJSON(w, status, pkghttp.ApiResponse{Message: err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(pkghttp.ApiResponse{Message: "client rejected"})
+	writeJSON(w, http.StatusOK, pkghttp.ApiResponse{Message: "client rejected"})
 }

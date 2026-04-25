@@ -21,21 +21,33 @@ Os principais pilares são:
 
 ```
 cmd/onboarding/main.go               # Ponto de entrada — liga as dependências e sobe os serviços
-internal/onboarding/
+internal/onboarding/                 # Bounded context: cadastro e aprovação de clientes
   domain/                            # Núcleo — zero dependências externas
     entity/                          # Aggregate root: Client
-    event/                           # Eventos de domínio
+    event/                           # Eventos de domínio: ClientCreated, ClientApproved, ClientRejected
     repository/                      # Interfaces de repositório
     errors.go                        # Erros sentinela do domínio
   application/usecases/              # Casos de uso: CreateClient, ApproveClient, RejectClient
   infrastructure/
-    outbox/                          # Worker do padrão Outbox
+    outbox/                          # Worker do padrão Outbox (LISTEN/NOTIFY)
     persistence/postgres/            # Implementações PostgreSQL
   interfaces/http/                   # Handlers HTTP
+internal/account/                    # Bounded context: contas bancárias
+  domain/
+    entity/                          # Aggregate root: Account
+    errors/                          # Erros sentinela do domínio
+    repository/                      # Interface AccountRepository
+    service/                         # Interface AccountNumberGenerator
+  application/usecases/              # Caso de uso: CreateAccount
+  infrastructure/
+    persistence/postgres/            # Implementações PostgreSQL (repositório + gerador de número)
+  interfaces/eventhandler/           # Handler do evento Onboarding.ClientApproved
 pkg/
   events/                            # Interface DomainEvent (Shared Kernel)
+  eventdispatcher/                   # Dispatcher in-process (implementa MessagePublisher)
   outbox/                            # Struct OutboxRecord
-  valueobjects/                      # Document (CPF/CNPJ), Email, Address, ID
+  http/                              # Struct ApiResponse compartilhada
+  valueobjects/                      # Document (CPF/CNPJ), Email, Address, AccountNumber, ID
 ```
 
 ---
@@ -46,7 +58,12 @@ pkg/
 
 Um **Bounded Context** é uma fronteira explícita dentro da qual um modelo de domínio específico se aplica. Dentro dessa fronteira, os termos têm significado preciso e consistente.
 
-Neste projeto, o bounded context é **Onboarding**. Todo o código que pertence a esse contexto vive em `internal/onboarding/`. Se no futuro o sistema crescer (ex: `payments`, `loans`), cada um teria seu próprio bounded context com seus próprios modelos — mesmo que compartilhem conceitos com nomes parecidos.
+Este projeto possui dois bounded contexts:
+
+- **Onboarding** (`internal/onboarding/`): responsável pelo cadastro e aprovação de clientes
+- **Account** (`internal/account/`): responsável pela criação e gestão de contas bancárias
+
+Cada contexto tem seus próprios aggregates, erros de domínio e repositórios — mesmo que compartilhem value objects do `pkg/`. A comunicação entre eles acontece via **eventos de domínio**, não por chamadas diretas.
 
 ---
 
@@ -54,7 +71,9 @@ Neste projeto, o bounded context é **Onboarding**. Todo o código que pertence 
 
 Um **Aggregate** é um cluster de objetos de domínio tratados como uma unidade. O **Aggregate Root** é o único ponto de entrada para modificar o estado desse cluster — nada de fora pode modificar os objetos internos diretamente.
 
-Neste projeto, `Client` é o aggregate root do contexto de Onboarding:
+Neste projeto há dois aggregate roots:
+
+**`Client`** (Onboarding):
 
 ```go
 // internal/onboarding/domain/entity/client.go
@@ -113,6 +132,40 @@ func (c *Client) ApproveClient() error {
 }
 ```
 
+**`Account`** (Account):
+
+```go
+// internal/account/domain/entity/account.go
+
+type Account struct {
+    clientID  string
+    accountID string
+    number    string
+    blocked   *time.Time
+    createdAt time.Time
+}
+```
+
+Uma conta é criada apenas via `CreateAccount()`, que recebe um `ClientID` e um número de conta já gerado:
+
+```go
+func CreateAccount(input CreateAccountInput) (*Account, error) {
+    if input.ClientID == "" {
+        return nil, errors.ErrClientIDRequired
+    }
+    if input.Number == "" {
+        return nil, errors.ErrAccountNumberRequired
+    }
+
+    return &Account{
+        clientID:  input.ClientID,
+        accountID: valueobjects.GenerateID(),
+        number:    input.Number,
+        createdAt: time.Now(),
+    }, nil
+}
+```
+
 **Por que isso importa?** Sem aggregate root, qualquer parte do sistema poderia mudar `status` diretamente, bypassando as regras. Com ele, é impossível aprovar um cliente que não está `PENDING` — a regra está codificada, não documentada.
 
 ---
@@ -149,9 +202,19 @@ func NewDocument(value string) (Document, error) {
         return Document{}, domain.ErrInvalidDocument
     }
 }
+```
 
-func (d Document) Number() string             { return d.number }
-func (d Document) Category() DocumentCategory { return d.category }
+`AccountNumber` encapsula o número de conta com dígito verificador calculado via algoritmo de Luhn:
+
+```go
+// pkg/valueobjects/account_number.go
+
+func NewAccountNumber(seq int64) string {
+    base := fmt.Sprintf("%09d", seq)
+    dv := calculateDV(base)
+    return fmt.Sprintf("%s-%d", base, dv)
+    // ex: "000000001-5"
+}
 ```
 
 Outros value objects neste projeto: `Email` (valida formato e normaliza para minúsculas) e `Address` (valida CEP, UF com 2 letras, campos obrigatórios).
@@ -160,7 +223,38 @@ Outros value objects neste projeto: `Email` (valida formato e normaliza para min
 
 ---
 
-### 4. Eventos de Domínio
+### 4. Domain Service
+
+Um **Domain Service** encapsula lógica de domínio que não pertence naturalmente a nenhum aggregate. É stateless e opera sobre objetos do domínio.
+
+Neste projeto, `AccountNumberGenerator` é um domain service do contexto de Account:
+
+```go
+// internal/account/domain/service/account_number_generator.go
+
+type AccountNumberGenerator interface {
+    Next() (string, error)
+}
+```
+
+A implementação PostgreSQL usa uma sequência do banco para garantir números únicos e crescentes:
+
+```go
+// internal/account/infrastructure/persistence/postgres/account_number_generator.go
+
+func (g *SequenceAccountNumberGenerator) Next() (string, error) {
+    var seq int64
+    err := g.db.QueryRow(ctx, "SELECT nextval('account_number_seq')").Scan(&seq)
+    // ...
+    return valueobjects.NewAccountNumber(seq), nil
+}
+```
+
+**Por que isso importa?** O domínio define **o que** precisa (um número único), mas não **como** é gerado. A interface pertence ao domínio; a implementação concreta fica na infraestrutura.
+
+---
+
+### 5. Eventos de Domínio
 
 **Domain Events** registram algo significativo que aconteceu no domínio. Eles são fatos imutáveis expressados na linguagem do negócio.
 
@@ -204,11 +298,11 @@ func (c *Client) PullEvents() []events.DomainEvent {
 
 ---
 
-### 5. Repository Pattern
+### 6. Repository Pattern
 
 O **Repository** abstrai o acesso a dados. O domínio define uma **interface** — ele sabe o que precisa, mas não sabe como é armazenado. A implementação concreta fica na camada de infraestrutura.
 
-A interface vive no domínio:
+A interface do contexto de Onboarding:
 
 ```go
 // internal/onboarding/domain/repository/client_repository.go
@@ -238,16 +332,12 @@ func (r *ClientRepository) Save(client *entity.Client, domainEvents []events.Dom
 
 ---
 
-### 6. Use Cases (Camada de Aplicação)
+### 7. Use Cases (Camada de Aplicação)
 
 **Use Cases** orquestram o fluxo de uma operação do sistema. Eles não contêm regras de negócio — delegam para o domínio. O padrão é sempre: **carregar → aplicar lógica → salvar**.
 
 ```go
 // internal/onboarding/application/usecases/create_client.go
-
-type CreateClientUseCase struct {
-    repo repository.ClientRepository
-}
 
 func (uc *CreateClientUseCase) Execute(input entity.CreateClientInput) error {
     // 1. Verificar pré-condições (regra da aplicação: email único)
@@ -270,22 +360,26 @@ func (uc *CreateClientUseCase) Execute(input entity.CreateClientInput) error {
 }
 ```
 
-O caso de uso de aprovação segue o mesmo padrão — carregar, aplicar, salvar:
+O caso de uso de criação de conta no contexto de Account segue o mesmo padrão — gerar número, criar aggregate, salvar:
 
 ```go
-// internal/onboarding/application/usecases/approve_client.go
+// internal/account/application/usecases/create_account.go
 
-func (uc *ApproveClientUseCase) Execute(input ApproveClientInput) error {
-    client, err := uc.repo.FindByID(input.ClientID)  // carregar
+func (uc *CreateAccountUseCase) Execute(input CreateAccountInput) error {
+    number, err := uc.generator.Next()           // gera número único via sequence
     if err != nil {
-        return fmt.Errorf("finding client by id: %w", err)
+        return fmt.Errorf("generating account number: %w", err)
     }
 
-    if err := client.ApproveClient(); err != nil {    // aplicar lógica de domínio
-        return fmt.Errorf("approving client: %w", err)
+    account, err := entity.CreateAccount(entity.CreateAccountInput{
+        ClientID: input.ClientID,
+        Number:   number,
+    })
+    if err != nil {
+        return err
     }
 
-    return uc.repo.Save(client, client.PullEvents())  // salvar com evento
+    return uc.repo.Save(account)
 }
 ```
 
@@ -293,7 +387,7 @@ func (uc *ApproveClientUseCase) Execute(input ApproveClientInput) error {
 
 ---
 
-### 7. Erros Sentinela
+### 8. Erros Sentinela
 
 Todos os erros de domínio são variáveis declaradas em um único lugar, verificáveis com `errors.Is()`. Isso preserva a identidade do erro mesmo quando ele é encapsulado com `fmt.Errorf("%w", ...)`.
 
@@ -332,7 +426,7 @@ if err := h.createClient.Execute(input); err != nil {
 
 ---
 
-### 8. Outbox Pattern
+### 9. Outbox Pattern
 
 O **Outbox Pattern** resolve o problema de consistência entre salvar dados e publicar eventos. Se o sistema salvasse no banco e depois publicasse no broker de mensagens, uma falha entre as duas operações causaria inconsistência.
 
@@ -356,7 +450,7 @@ A solução: salvar o cliente e os eventos **na mesma transação do banco de da
           [Outbox Worker]
                     |
                     v
-          [MessagePublisher] → Kafka / RabbitMQ / etc.
+          [EventDispatcher] → handlers registrados
 ```
 
 O worker bloqueia aguardando notificações do PostgreSQL, sem polling:
@@ -385,7 +479,58 @@ func (w *Worker) Start(ctx context.Context) error {
 
 ---
 
-## Fluxo do Onboarding
+### 10. Comunicação entre Bounded Contexts
+
+Bounded contexts não se chamam diretamente. A comunicação acontece via **eventos de domínio**, mantendo o desacoplamento entre os contextos.
+
+Neste projeto, o `EventDispatcher` do `pkg/eventdispatcher` é o mediador in-process: ele implementa a interface `MessagePublisher` esperada pelo outbox worker e despacha os eventos para os handlers registrados.
+
+```go
+// pkg/eventdispatcher/dispatcher.go
+
+type Dispatcher struct {
+    handlers map[string][]Handler
+}
+
+func (d *Dispatcher) Publish(eventName string, payload []byte) error {
+    for _, h := range d.handlers[eventName] {
+        if err := h(payload); err != nil {
+            return fmt.Errorf("handler for %s: %w", eventName, err)
+        }
+    }
+    return nil
+}
+```
+
+O contexto de Account registra um handler para o evento `Onboarding.ClientApproved`:
+
+```go
+// internal/account/interfaces/eventhandler/client_approved.go
+
+func (h *ClientApprovedHandler) Handle(payload []byte) error {
+    var p clientApprovedPayload
+    if err := json.Unmarshal(payload, &p); err != nil {
+        return fmt.Errorf("unmarshaling ClientApproved payload: %w", err)
+    }
+
+    return h.useCase.Execute(usecases.CreateAccountInput{ClientID: p.ClientID})
+}
+```
+
+No `main.go`, o registro acontece na inicialização:
+
+```go
+dispatcher := eventdispatcher.New()
+dispatcher.Register("Onboarding.ClientApproved", accounteventhandler.NewClientApprovedHandler(createAccount).Handle)
+
+worker := outbox.NewWorker(conn, outboxRepo, dispatcher)
+```
+
+**Por que isso importa?** O contexto de Onboarding não sabe que o contexto de Account existe — ele apenas emite `ClientApproved`. Novos contextos podem reagir a esse evento sem alterar nenhuma linha do código de Onboarding.
+
+---
+
+## Fluxo Completo
 
 ```
 POST /clients
@@ -393,6 +538,9 @@ POST /clients
           |
           ├─ PATCH /clients/{id}/approve
           │    └─ ApproveClient() → status: APPROVED, emite ClientApproved
+          │              |
+          │              └─ [Outbox Worker] → ClientApprovedHandler
+          │                                       └─ CreateAccount() → conta bancária criada
           │
           └─ PATCH /clients/{id}/reject
                └─ RejectClient(reason) → status: REJECTED, emite ClientRejected
@@ -412,6 +560,7 @@ export DATABASE_URL="postgres://user:password@localhost:5432/corebanking?sslmode
 
 # Aplicar migrations
 psql $DATABASE_URL -f migrations/001_initial.sql
+psql $DATABASE_URL -f migrations/002_create_accounts.sql
 
 # Rodar a aplicação
 go run ./cmd/onboarding/...
@@ -438,7 +587,7 @@ go vet ./...
 
 ```
 POST   /clients                        Cria um novo cliente (status: PENDING)
-PATCH  /clients/{clientID}/approve     Aprova um cliente pendente
+PATCH  /clients/{clientID}/approve     Aprova um cliente pendente (cria conta bancária automaticamente)
 PATCH  /clients/{clientID}/reject      Rejeita um cliente pendente
 ```
 
