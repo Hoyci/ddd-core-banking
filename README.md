@@ -20,7 +20,8 @@ Os principais pilares são:
 ## Estrutura do Projeto
 
 ```
-cmd/onboarding/main.go               # Ponto de entrada — liga as dependências e sobe os serviços
+cmd/onboarding/main.go               # Serviço Onboarding — HTTP + outbox worker + RabbitMQ publisher
+cmd/account/main.go                  # Serviço Account — consumer RabbitMQ + criação de contas
 internal/onboarding/                 # Bounded context: cadastro e aprovação de clientes
   domain/                            # Núcleo — zero dependências externas
     entity/                          # Aggregate root: Client
@@ -44,7 +45,7 @@ internal/account/                    # Bounded context: contas bancárias
   interfaces/eventhandler/           # Handler do evento Onboarding.ClientApproved
 pkg/
   events/                            # Interface DomainEvent (Shared Kernel)
-  eventdispatcher/                   # Dispatcher in-process (implementa MessagePublisher)
+  messaging/                         # RabbitMQ: Publisher (topic exchange) e Consumer (DLQ)
   outbox/                            # Struct OutboxRecord
   http/                              # Struct ApiResponse compartilhada
   valueobjects/                      # Document (CPF/CNPJ), Email, Address, AccountNumber, ID
@@ -450,7 +451,7 @@ A solução: salvar o cliente e os eventos **na mesma transação do banco de da
           [Outbox Worker]
                     |
                     v
-          [EventDispatcher] → handlers registrados
+          [RabbitMQ Publisher] → exchange core-banking
 ```
 
 O worker bloqueia aguardando notificações do PostgreSQL, sem polling:
@@ -481,28 +482,42 @@ func (w *Worker) Start(ctx context.Context) error {
 
 ### 10. Comunicação entre Bounded Contexts
 
-Bounded contexts não se chamam diretamente. A comunicação acontece via **eventos de domínio**, mantendo o desacoplamento entre os contextos.
+Bounded contexts não se chamam diretamente. A comunicação acontece via **eventos de domínio publicados no RabbitMQ**, mantendo os contextos completamente desacoplados — inclusive em processos separados.
 
-Neste projeto, o `EventDispatcher` do `pkg/eventdispatcher` é o mediador in-process: ele implementa a interface `MessagePublisher` esperada pelo outbox worker e despacha os eventos para os handlers registrados.
+Neste projeto há dois serviços independentes:
+
+- **`cmd/onboarding`**: publica eventos no RabbitMQ via outbox worker
+- **`cmd/account`**: consome eventos do RabbitMQ e cria contas bancárias
+
+O serviço de Onboarding usa o `Publisher` do `pkg/messaging/rabbitmq` como `MessagePublisher`:
 
 ```go
-// pkg/eventdispatcher/dispatcher.go
+// cmd/onboarding/main.go
 
-type Dispatcher struct {
-    handlers map[string][]Handler
-}
+publisher, err := rabbitmq.NewPublisher(rabbitURL, "core-banking")
 
-func (d *Dispatcher) Publish(eventName string, payload []byte) error {
-    for _, h := range d.handlers[eventName] {
-        if err := h(payload); err != nil {
-            return fmt.Errorf("handler for %s: %w", eventName, err)
-        }
-    }
-    return nil
-}
+worker := outbox.NewWorker(conn, outboxRepo, publisher)
+// publisher.Publish(eventName, payload) → RabbitMQ topic exchange
 ```
 
-O contexto de Account registra um handler para o evento `Onboarding.ClientApproved`:
+O serviço de Account usa o `Consumer` para se inscrever no evento e chamar o use case:
+
+```go
+// cmd/account/main.go
+
+consumer, _ := rabbitmq.NewConsumer(rabbitURL)
+handler := eventhandler.NewClientApprovedHandler(createAccount)
+consumer.Subscribe("core-banking", "account.client-approved", "Onboarding.ClientApproved", handler.Handle)
+```
+
+O Consumer configura automaticamente uma **Dead Letter Queue (DLQ)** para mensagens que falharem no processamento, sem requeue imediato:
+
+```go
+// pkg/messaging/rabbitmq/consumer.go — ao falhar o handler:
+msg.Nack(false, false)  // vai para DLQ, não volta para a fila principal
+```
+
+O handler deserializa o payload e delega ao use case:
 
 ```go
 // internal/account/interfaces/eventhandler/client_approved.go
@@ -517,33 +532,33 @@ func (h *ClientApprovedHandler) Handle(payload []byte) error {
 }
 ```
 
-No `main.go`, o registro acontece na inicialização:
-
-```go
-dispatcher := eventdispatcher.New()
-dispatcher.Register("Onboarding.ClientApproved", accounteventhandler.NewClientApprovedHandler(createAccount).Handle)
-
-worker := outbox.NewWorker(conn, outboxRepo, dispatcher)
-```
-
-**Por que isso importa?** O contexto de Onboarding não sabe que o contexto de Account existe — ele apenas emite `ClientApproved`. Novos contextos podem reagir a esse evento sem alterar nenhuma linha do código de Onboarding.
+**Por que isso importa?** O serviço de Onboarding não sabe que o serviço de Account existe — ele apenas publica `ClientApproved` no exchange. Novos serviços podem consumir esse evento sem alterar nenhuma linha do código de Onboarding.
 
 ---
 
 ## Fluxo Completo
 
 ```
+[Serviço Onboarding]                          [Serviço Account]
+─────────────────────                         ─────────────────
 POST /clients
-  └─ CreateClient() → status: PENDING, emite ClientCreated
-          |
-          ├─ PATCH /clients/{id}/approve
-          │    └─ ApproveClient() → status: APPROVED, emite ClientApproved
-          │              |
-          │              └─ [Outbox Worker] → ClientApprovedHandler
-          │                                       └─ CreateAccount() → conta bancária criada
-          │
-          └─ PATCH /clients/{id}/reject
-               └─ RejectClient(reason) → status: REJECTED, emite ClientRejected
+  └─ CreateClient() → PENDING, emite ClientCreated
+
+PATCH /clients/{id}/approve
+  └─ ApproveClient() → APPROVED, emite ClientApproved
+            |
+            └─ [Outbox Worker]
+                      |
+                      v
+             [RabbitMQ Exchange]  ──────────────────▶  Consumer
+             "core-banking"                               |
+                                                          └─ ClientApprovedHandler
+                                                                   |
+                                                                   └─ CreateAccount()
+                                                                        └─ conta criada
+
+PATCH /clients/{id}/reject
+  └─ RejectClient(reason) → REJECTED, emite ClientRejected
 ```
 
 Apenas clientes com status `PENDING` podem ser aprovados ou rejeitados. Qualquer tentativa com outro status retorna `ErrClientNotPending`.
@@ -552,25 +567,48 @@ Apenas clientes com status `PENDING` podem ser aprovados ou rejeitados. Qualquer
 
 ## Como Rodar
 
-**Pré-requisitos:** Go 1.22+ e PostgreSQL
+**Pré-requisitos:** Go 1.22+, PostgreSQL e RabbitMQ — ou Docker para subir tudo com um comando.
+
+### Com Docker (recomendado)
 
 ```bash
-# Variável de ambiente necessária
+# Sobe PostgreSQL e RabbitMQ
+docker-compose up -d
+
+# Rodar os serviços
+go run ./cmd/onboarding/...
+go run ./cmd/account/...
+```
+
+### Com Tilt (hot reload)
+
+```bash
+tilt up
+```
+
+O Tiltfile sobe a infra via docker-compose e reinicia os serviços automaticamente ao salvar arquivos.
+
+### Manualmente
+
+```bash
+# Variáveis de ambiente necessárias
 export DATABASE_URL="postgres://user:password@localhost:5432/corebanking?sslmode=disable"
+export RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
 
 # Aplicar migrations
 psql $DATABASE_URL -f migrations/001_initial.sql
 psql $DATABASE_URL -f migrations/002_create_accounts.sql
 
-# Rodar a aplicação
+# Rodar os dois serviços (em terminais separados)
 go run ./cmd/onboarding/...
+go run ./cmd/account/...
 ```
 
 **Comandos úteis:**
 
 ```bash
 # Build
-go build ./cmd/onboarding/... ./internal/... ./pkg/...
+go build ./cmd/... ./internal/... ./pkg/...
 
 # Testes
 go test ./...
