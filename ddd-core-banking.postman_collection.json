@@ -5,12 +5,22 @@
   },
   "variable": [
     {
-      "key": "base_url",
+      "key": "onboarding_url",
       "value": "http://localhost:8080",
       "type": "string"
     },
     {
+      "key": "payment_url",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
       "key": "client_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "account_id",
       "value": "",
       "type": "string"
     }
@@ -39,23 +49,16 @@
           "request": {
             "method": "POST",
             "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"full_name\": \"João da Silva\",\n  \"document\": \"529.982.247-25\",\n  \"email\": \"joao.silva@example.com\",\n  \"phone\": \"11999999999\",\n  \"address\": {\n    \"zip_code\": \"01310-100\",\n    \"street\": \"Avenida Paulista\",\n    \"number\": \"1000\",\n    \"complement\": \"Apto 42\",\n    \"neighborhood\": \"Bela Vista\",\n    \"city\": \"São Paulo\",\n    \"state\": \"SP\"\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{base_url}}/clients",
-              "host": ["{{base_url}}"],
+              "raw": "{{onboarding_url}}/clients",
+              "host": ["{{onboarding_url}}"],
               "path": ["clients"]
             }
           },
@@ -64,27 +67,21 @@
               "name": "201 Created",
               "status": "Created",
               "code": 201,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"Account created successfully\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"client successfully created\"\n}"
             },
             {
               "name": "409 Email Already In Use",
               "status": "Conflict",
               "code": 409,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
               "body": "{\n  \"message\": \"email already in use\"\n}"
             },
             {
               "name": "422 Validation Error",
               "status": "Unprocessable Entity",
               "code": 422,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
               "body": "{\n  \"message\": \"invalid document\"\n}"
             }
           ]
@@ -95,8 +92,8 @@
             "method": "PATCH",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/clients/{{client_id}}/approve",
-              "host": ["{{base_url}}"],
+              "raw": "{{onboarding_url}}/clients/{{client_id}}/approve",
+              "host": ["{{onboarding_url}}"],
               "path": ["clients", "{{client_id}}", "approve"]
             }
           },
@@ -105,28 +102,22 @@
               "name": "200 OK",
               "status": "OK",
               "code": 200,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"Account approved successfully\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"client approved\"\n}"
             },
             {
               "name": "404 Not Found",
               "status": "Not Found",
               "code": 404,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"client not found\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"not found\"\n}"
             },
             {
               "name": "422 Not Pending",
               "status": "Unprocessable Entity",
               "code": 422,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"account is not pending\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"client is not pending\"\n}"
             }
           ]
         },
@@ -135,23 +126,16 @@
           "request": {
             "method": "PATCH",
             "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"reason\": \"Documento inválido\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{base_url}}/clients/{{client_id}}/reject",
-              "host": ["{{base_url}}"],
+              "raw": "{{onboarding_url}}/clients/{{client_id}}/reject",
+              "host": ["{{onboarding_url}}"],
               "path": ["clients", "{{client_id}}", "reject"]
             }
           },
@@ -160,28 +144,178 @@
               "name": "200 OK",
               "status": "OK",
               "code": 200,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"Account rejected successfully\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"client rejected\"\n}"
             },
             {
               "name": "404 Not Found",
               "status": "Not Found",
               "code": 404,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
-              "body": "{\n  \"message\": \"client not found\"\n}"
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"not found\"\n}"
             },
             {
               "name": "422 Reason Required",
               "status": "Unprocessable Entity",
               "code": 422,
-              "header": [
-                { "key": "Content-Type", "value": "application/json" }
-              ],
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
               "body": "{\n  \"message\": \"rejection reason is required\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment",
+      "item": [
+        {
+          "name": "Pay Invoice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.data && body.data.payment_id) {",
+                  "        pm.collectionVariables.set('payment_id', body.data.payment_id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{account_id}}\",\n  \"barcode\": \"34191.79001 01043.510047 91020.150008 1 10010000050000\",\n  \"amount\": 5000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{payment_url}}/payments/invoice",
+              "host": ["{{payment_url}}"],
+              "path": ["payments", "invoice"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"data\": {\n    \"payment_id\": \"uuid-here\",\n    \"amount\": 5000\n  }\n}"
+            },
+            {
+              "name": "404 Account Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"account not found\"\n}"
+            },
+            {
+              "name": "422 Insufficient Funds",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"insufficient funds\"\n}"
+            },
+            {
+              "name": "403 Account Blocked",
+              "status": "Forbidden",
+              "code": 403,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"account is blocked\"\n}"
+            },
+            {
+              "name": "503 Core Banking Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"core banking service temporarily unavailable: ...\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Transfer Funds",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.data && body.data.transfer_id) {",
+                  "        pm.collectionVariables.set('transfer_id', body.data.transfer_id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender_account_id\": \"{{account_id}}\",\n  \"receiver_account_id\": \"\",\n  \"amount\": 10000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{payment_url}}/payments/transfers",
+              "host": ["{{payment_url}}"],
+              "path": ["payments", "transfers"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"data\": {\n    \"transfer_id\": \"uuid-here\",\n    \"amount\": 10000\n  }\n}"
+            },
+            {
+              "name": "404 Account Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"account not found\"\n}"
+            },
+            {
+              "name": "422 Insufficient Funds",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"insufficient funds\"\n}"
+            },
+            {
+              "name": "422 Self Transfer",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"self transfer is not allowed\"\n}"
+            },
+            {
+              "name": "403 Account Blocked",
+              "status": "Forbidden",
+              "code": 403,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"account is blocked\"\n}"
+            },
+            {
+              "name": "503 Core Banking Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"core banking service temporarily unavailable: ...\"\n}"
             }
           ]
         }

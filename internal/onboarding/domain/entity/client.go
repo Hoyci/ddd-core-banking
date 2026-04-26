@@ -128,6 +128,7 @@ func (c *Client) RejectClient(reason string) error {
 
 	c.status = OnboardingStatusRejected
 	c.events = append(c.events, event.ClientRejected{
+		Email:     c.Email(),
 		ClientID:  c.id,
 		Document:  c.Document().Number(),
 		FullName:  c.fullName,

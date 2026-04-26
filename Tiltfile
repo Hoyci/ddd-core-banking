@@ -24,3 +24,24 @@ local_resource(
     deps=['cmd/account', 'internal/account', 'pkg'],
     resource_deps=['postgres', 'rabbitmq'],
 )
+
+local_resource(
+    'payment',
+    serve_cmd='go run ./cmd/payment/...',
+    serve_env={
+        'DATABASE_URL': DB_URL,
+        'RABBITMQ_URL': RABBIT_URL,
+    },
+    deps=['cmd/payment', 'internal/payment', 'pkg'],
+    resource_deps=['postgres', 'rabbitmq'],
+)
+
+local_resource(
+    'notification',
+    serve_cmd='go run ./cmd/notification/...',
+    serve_env={
+        'RABBITMQ_URL': RABBIT_URL,
+    },
+    deps=['cmd/notification', 'internal/notification', 'pkg'],
+    resource_deps=['rabbitmq'],
+)
