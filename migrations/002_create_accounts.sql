@@ -5,5 +5,6 @@ CREATE TABLE accounts (
     client_id  TEXT        NOT NULL UNIQUE REFERENCES clients(id),
     number     TEXT        NOT NULL UNIQUE,
     blocked    TIMESTAMPTZ,
+    balance    BIGINT      NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL
 );

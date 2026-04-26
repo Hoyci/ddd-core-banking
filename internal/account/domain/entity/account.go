@@ -8,9 +8,10 @@ import (
 )
 
 type Account struct {
-	clientID  string
 	accountID string
+	clientID  string
 	number    string
+	balance   int64
 	blocked   *time.Time
 	createdAt time.Time
 }
@@ -41,6 +42,7 @@ type AccountData struct {
 	AccountID string
 	ClientID  string
 	Number    string
+	Balance   int64
 	Blocked   *time.Time
 	CreatedAt time.Time
 }
@@ -50,6 +52,7 @@ func ReconstituteAccount(data AccountData) *Account {
 		accountID: data.AccountID,
 		clientID:  data.ClientID,
 		number:    data.Number,
+		balance:   data.Balance,
 		blocked:   data.Blocked,
 		createdAt: data.CreatedAt,
 	}
@@ -58,5 +61,6 @@ func ReconstituteAccount(data AccountData) *Account {
 func (a *Account) AccountID() string    { return a.accountID }
 func (a *Account) ClientID() string     { return a.clientID }
 func (a *Account) Number() string       { return a.number }
+func (a *Account) Balance() int64       { return a.balance }
 func (a *Account) Blocked() *time.Time  { return a.blocked }
 func (a *Account) CreatedAt() time.Time { return a.createdAt }
